@@ -43,7 +43,7 @@ def test(phase, f, config, args, testloader, model, state=None, epoch=0, max_mio
                 if phase == 'test':
                     f.write('Batch {} .................... skipped'.format(batch_idx + 1), end=('\r' if (batch_idx % 10) < 9 else '\n'), r_white=True)
             else:
-                if config.gpu and torch.cuda.is_available():
+                if config.gpu:
                     data = [datum.cuda() for datum in data] if config.thl else data.cuda()
                     labels = labels.cuda()
                 

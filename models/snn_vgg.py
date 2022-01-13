@@ -24,6 +24,8 @@ class SNN_VGG(nn.Module):
     def __init__(self, config, grad_type='Linear', init='xavier'):
         super(SNN_VGG, self).__init__()
 
+        self.gpu = config.gpu
+
         # Architecture parameters
         self.architecture = config.architecture
         self.dataset = config.dataset
@@ -46,7 +48,7 @@ class SNN_VGG(nn.Module):
 
         # Instantiate differentiable spiking nonlinearity
         self.spike_fn = init_spike_fn(grad_type)
-        self.input_layer = PoissonGenerator()
+        self.input_layer = PoissonGenerator(self.gpu)
 
         self._make_layers()
         self._init_layers()
@@ -90,7 +92,7 @@ class SNN_VGG(nn.Module):
         padding = (self.kernel_size-1)//2
         dilation = 2
 
-        scores_counter = -1
+        self.scores_counter = -1
 
         in_channels = self.dataset['input_dim']
         divisor = 1
@@ -111,7 +113,7 @@ class SNN_VGG(nn.Module):
                 in_channels = int(x[6:])
             elif isinstance(x, str) and x == 'score':
                 self.scores_features[str(layer)] = nn.Conv2d(in_channels, self.dataset['num_cls'], kernel_size=1)
-                scores_counter += 1
+                self.scores_counter += 1
                 continue
             else:
                 layers += [nn.Conv2d(in_channels, x, kernel_size=self.kernel_size, padding=padding, stride=stride, bias=bias_flag)]
@@ -140,7 +142,7 @@ class SNN_VGG(nn.Module):
                 continue
             elif isinstance(x, str) and x == 'score':
                 self.scores_classifier[str(layer)] = nn.Conv2d(in_channels, self.dataset['num_cls'], kernel_size=1)
-                scores_counter += 1
+                self.scores_counter += 1
                 continue
             elif isinstance(x, str) and x == 'output':
                 layers += [nn.Conv2d(in_channels, self.dataset['num_cls'], kernel_size=1, padding=0, stride=stride, bias=bias_flag)]
@@ -166,7 +168,7 @@ class SNN_VGG(nn.Module):
             layers = []
             height = self.img_size[0]
             width = self.img_size[1]
-            for _ in range(scores_counter):
+            for _ in range(self.scores_counter):
                 divisor = divisor//2
                 layers += [nn.Sequential(
                     nn.ConvTranspose2d(self.dataset['num_cls'], self.dataset['num_cls'], kernel_size=self.kernel_size, stride=2, bias=False),
@@ -219,7 +221,7 @@ class SNN_VGG(nn.Module):
                 x = int(x[6:])
             elif not isinstance(x, int):
                 continue
-            layers += [torch.zeros(N, x, height//divisor, width//divisor).cuda()]
+            layers += [torch.zeros(N, x, height//divisor, width//divisor).cuda()] if self.gpu else [torch.zeros(N, x, height//divisor, width//divisor)]
             if get_layer_shape and i == layer:
                 return layers[-1].shape
             i += 1
@@ -238,7 +240,7 @@ class SNN_VGG(nn.Module):
                 x = int(x.split('-')[0])
             else:
                 continue
-            layers += [torch.zeros(N, x, height//divisor, width//divisor).cuda()]
+            layers += [torch.zeros(N, x, height//divisor, width//divisor).cuda()] if self.gpu else [torch.zeros(N, x, height//divisor, width//divisor)]
             if get_layer_shape and i == layer:
                 return layers[-1].shape
             i += 1
@@ -246,10 +248,10 @@ class SNN_VGG(nn.Module):
 
         if self.fcn:
             layers = []
-            for x in (cfg_upsample[self.architecture]):
+            for _ in range(self.scores_counter):
                 divisor = divisor//2
                 if isinstance(x, int):
-                    layers += [torch.zeros(N, self.dataset['num_cls'], height//divisor, width//divisor).cuda()]
+                    layers += [torch.zeros(N, self.dataset['num_cls'], height//divisor, width//divisor).cuda()] if self.gpu else [torch.zeros(N, self.dataset['num_cls'], height//divisor, width//divisor)]
                     if get_layer_shape and i == layer:
                         return layers[-1].shape
                     i += 1
@@ -266,9 +268,9 @@ class SNN_VGG(nn.Module):
         if threshold_type == 'layer':
             return 0.0
         elif threshold_type == 'channel':
-            return torch.zeros(layer_shape[1]).cuda()
+            return torch.zeros(layer_shape[1]).cuda() if self.gpu else torch.zeros(layer_shape[1])
         elif threshold_type == 'neuron':
-            return torch.zeros(layer_shape[1], layer_shape[2], layer_shape[3]).cuda()
+            return torch.zeros(layer_shape[1], layer_shape[2], layer_shape[3]).cuda() if self.gpu else torch.zeros(layer_shape[1], layer_shape[2], layer_shape[3])
         else:
             return None
 
@@ -281,9 +283,9 @@ class SNN_VGG(nn.Module):
             if (isinstance(m, nn.Conv2d)) and thresholds:
                 v_th = thresholds.pop(0)*self.scaling_factor
                 if threshold_type == 'channel':
-                    v_th = (v_th[:, None, None]).cuda()
+                    v_th = (v_th[:, None, None]).cuda() if self.gpu else (v_th[:, None, None])
                 elif threshold_type == 'neuron':
-                    v_th = (v_th[None, :, :, :]).cuda()
+                    v_th = (v_th[None, :, :, :]).cuda() if self.gpu else (v_th[None, :, :, :])
                 m.threshold_pos = torch.tensor(v_th)
                 m.threshold_neg = torch.tensor((-1/self.alpha)*v_th)
 
@@ -309,8 +311,10 @@ class SNN_VGG(nn.Module):
         for t in range(total_timesteps):
             if t < self.timesteps:
                 out_prev = x[t] if self.thl else self.input_layer(x)
-            else:
+            elif self.gpu:
                 out_prev = torch.zeros_like(x[-1]).cuda() if self.thl else torch.zeros_like(x).cuda()
+            else:
+                out_prev = torch.zeros_like(x[-1]) if self.thl else torch.zeros_like(x)
 
             for k in range(len(self.features)):
 
@@ -339,8 +343,8 @@ class SNN_VGG(nn.Module):
                     mem_thr_neg 	= (mem_features/self.features[k].threshold_neg) - 1.0
                 else:
                     mem_thr_neg     = torch.zeros_like(mem_thr_pos)
-                out                 = self.spike_fn(mem_thr_pos)
-                rst                 = torch.zeros_like(mem_features[k]).cuda()
+                out                 = self.spike_fn(mem_thr_pos, self.gpu)
+                rst                 = torch.zeros_like(mem_features[k]).cuda() if self.gpu else torch.zeros_like(mem_features[k])
                 rst                 = (mem_thr_pos > 0) * self.features[k].threshold_pos + (mem_thr_neg > 0) * self.features[k].threshold_neg
                 mem_features[k]     = mem_features[k] - rst
                 out_prev            = out.clone()
@@ -387,8 +391,8 @@ class SNN_VGG(nn.Module):
                     mem_thr_neg 	= (mem_classifier/self.classifier[k].threshold_neg) - 1.0
                 else:
                     mem_thr_neg     = torch.zeros_like(mem_thr_pos)
-                out                 = self.spike_fn(mem_thr_pos)
-                rst                 = torch.zeros_like(mem_classifier[k]).cuda()
+                out                 = self.spike_fn(mem_thr_pos, self.gpu)
+                rst                 = torch.zeros_like(mem_classifier[k]).cuda() if self.gpu else torch.zeros_like(mem_classifier[k])
                 rst                 = (mem_thr_pos > 0) * self.classifier[k].threshold_pos + (mem_thr_neg > 0) * self.classifier[k].threshold_neg
                 mem_classifier[k]   = mem_classifier[k] - rst
                 out_prev            = out.clone()
@@ -416,8 +420,8 @@ class SNN_VGG(nn.Module):
                         mem_thr_neg 	= (mem_upsample/self.upsample[k].threshold_neg) - 1.0
                     else:
                         mem_thr_neg     = torch.zeros_like(mem_thr_pos)
-                    out                 = self.spike_fn(mem_thr_pos)
-                    rst                 = torch.zeros_like(mem_upsample[k]).cuda()
+                    out                 = self.spike_fn(mem_thr_pos, self.gpu)
+                    rst                 = torch.zeros_like(mem_upsample[k]).cuda() if self.gpu else torch.zeros_like(mem_upsample[k])
                     rst                 = (mem_thr_pos > 0) * self.upsample[k].threshold_pos + (mem_thr_neg > 0) * self.upsample[k].threshold_neg
                     mem_upsample[k]     = mem_upsample[k] - rst
                     out_prev            = out.clone()

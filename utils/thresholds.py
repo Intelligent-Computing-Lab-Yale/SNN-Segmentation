@@ -10,7 +10,7 @@ def find_thresholds(f, loader, model, config):
 
         for batch_idx, (data, target) in enumerate(loader):
             
-            if torch.cuda.is_available() and config.gpu:
+            if config.gpu:
                 data, target = data.cuda(), target.cuda()
 
             with torch.no_grad():

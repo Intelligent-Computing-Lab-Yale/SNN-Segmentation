@@ -14,11 +14,13 @@ import sys
 # --------------------------------------------------
 class PoissonGenerator(nn.Module):
     
-    def __init__(self):
+    def __init__(self, gpu=False):
         super().__init__()
 
+        self.gpu = gpu
+
     def forward(self, inp, rescale_fac=1.0):
-        rand_inp = torch.rand_like(inp).cuda()
+        rand_inp = torch.rand_like(inp).cuda() if self.gpu else torch.rand_like(inp)
         return torch.mul(torch.le(rand_inp * rescale_fac, torch.abs(inp)).float(), torch.sign(inp))
 
 
@@ -38,7 +40,7 @@ class SuperSpike(torch.autograd.Function):
     scale = 100.0  # Controls the steepness of the fast-sigmoid surrogate gradient
 
     @staticmethod
-    def forward(ctx, input):
+    def forward(ctx, input, gpu):
         """
         In the forward pass, we compute a step function of the input Tensor and
         return it. ctx is a context object that we use to stash information which
@@ -46,7 +48,7 @@ class SuperSpike(torch.autograd.Function):
         the ctx.save_for_backward method.
         """
         ctx.save_for_backward(input)
-        out = torch.zeros_like(input).cuda()
+        out = torch.zeros_like(input).cuda() if gpu else torch.zeros_like(input)
         out[input > 0] = 1.0
         return out
 
@@ -78,7 +80,7 @@ class LinearSpike(torch.autograd.Function):
     gamma = 0.3  # Controls the dampening of the piecewise-linear surrogate gradient
 
     @staticmethod
-    def forward(ctx, input):
+    def forward(ctx, input, gpu):
         """
         In the forward pass, we compute a step function of the input Tensor and
         return it. ctx is a context object that we use to stash information which
@@ -86,7 +88,7 @@ class LinearSpike(torch.autograd.Function):
         the ctx.save_for_backward method.
         """
         ctx.save_for_backward(input)
-        out = torch.zeros_like(input).cuda()
+        out = torch.zeros_like(input).cuda() if gpu else torch.zeros_like(input)
         out[input > 0] = 1.0
         return out
 
@@ -119,7 +121,7 @@ class ExpSpike(torch.autograd.Function):
     beta = 10.0  # Controls the steepness of the exponential surrogate gradient
 
     @staticmethod
-    def forward(ctx, input):
+    def forward(ctx, input, gpu):
         """
         In the forward pass, we compute a step function of the input Tensor and
         return it. ctx is a context object that we use to stash information which
@@ -127,7 +129,7 @@ class ExpSpike(torch.autograd.Function):
         the ctx.save_for_backward method.
         """
         ctx.save_for_backward(input)
-        out = torch.zeros_like(input).cuda()
+        out = torch.zeros_like(input).cuda() if gpu else torch.zeros_like(input)
         out[input > 0] = 1.0
         return out
 
@@ -157,14 +159,14 @@ class PassThruSpike(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, input):
+    def forward(ctx, input, gpu):
         """
         In the forward pass, we compute a step function of the input Tensor and
         return it. For this spiking nonlinearity, the context object ctx does not
         stash input information since it is not used for backpropagation.
         """
         # ctx.save_for_backward(input)
-        out = torch.zeros_like(input).cuda()
+        out = torch.zeros_like(input).cuda() if gpu else torch.zeros_like(input)
         out[input > 0] = 1.0
         return out
 

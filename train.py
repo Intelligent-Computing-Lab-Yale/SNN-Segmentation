@@ -116,7 +116,7 @@ with run:
 
         for batch_idx, (data, labels) in enumerate(trainloader):
             
-            if config.gpu and torch.cuda.is_available():
+            if config.gpu:
                 data = [datum.cuda() for datum in data] if config.thl else data.cuda()
                 labels = labels.cuda()
 

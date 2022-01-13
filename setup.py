@@ -47,7 +47,7 @@ def setup(phase, args):
             # Processing
             seed                = args.seed,
             num_workers         = args.num_workers,
-            gpu                 = args.gpu,
+            gpu                 = args.gpu if torch.cuda.is_available() else False,
             # Model
             model_path          = None,
             conversion          = None,
@@ -99,7 +99,7 @@ def setup(phase, args):
             # Processing
             seed                = args.seed,
             num_workers         = args.num_workers,
-            gpu                 = args.gpu,
+            gpu                 = args.gpu if torch.cuda.is_available() else False,
             # Model
             model_path          = model_path,
             conversion          = conversion,
@@ -232,7 +232,7 @@ def setup(phase, args):
     
     # print(model)
 
-    if config.gpu and torch.cuda.is_available():
+    if config.gpu:
         model = model.cuda()
 
     if args.see_model:
