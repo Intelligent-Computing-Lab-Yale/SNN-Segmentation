@@ -1,0 +1,14 @@
+check.py
+
+datalists
+events
+images
+labels
+check
+
+ImageSets
+JPEGImages
+SegmentationClassAug
+
+*.png
+*.jpg
