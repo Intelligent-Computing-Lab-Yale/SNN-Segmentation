@@ -1,3 +1,11 @@
+"""
+
+Visualize dataset examples.
+
+@author: Joshua Chough
+
+"""
+
 from voc2012 import *
 from ddd17 import *
 

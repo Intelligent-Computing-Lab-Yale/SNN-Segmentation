@@ -1,3 +1,11 @@
+"""
+
+SNN model module.
+
+@author: Joshua Chough
+
+"""
+
 #---------------------------------------------------
 # Imports
 #---------------------------------------------------
@@ -5,19 +13,20 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
-from utils.scores import scores
 
 from .spikes import *
 from .net_utils import AverageMeterNetwork
 
+# Feature architectures
 cfg_features = {
     'dl-vgg9':  [64, 64, 'avg2', 128, 128, 'avg2', 256, 'atrous256', 'atrous256'],
-    'fcn-vgg9':  [64, 64, 'score', 'avg2', 128, 128, 'score', 'avg2', 256, 256, 256, 'score', 'avg2'],
+    'fcn-vgg9':  [64, 64, 'skip', 'avg2', 128, 128, 'skip', 'avg2', 256, 256, 256, 'skip', 'avg2'],
 }
 
+# Classifier architectures
 cfg_classifier = {
     'dl-vgg9':  ['atrous1024', 'output'], #! don't need avg pooling?
-    'fcn-vgg9':  ['1024-3-1', '1024-3-1', 'score'],
+    'fcn-vgg9':  ['1024-3-1', '1024-3-1', 'skip'],
 }
 
 class SNN_VGG(nn.Module):
@@ -68,7 +77,7 @@ class SNN_VGG(nn.Module):
         if self.count_spikes:
             # Make AverageMeterNetwork for measuring spikes
             model_length = len(self.features) + len(self.classifier) - 1
-            self.activations = AverageMeterNetwork(model_length)
+            self.spikes = AverageMeterNetwork(model_length)
 
             if self.fcn:
                 mem_features, mem_classifier, mem_upsample = self._initialize_mems(1)
@@ -82,9 +91,9 @@ class SNN_VGG(nn.Module):
                 else:
                     layer_shape = mem_upsample[i].shape
                 neurons = layer_shape[1] * layer_shape[2] * layer_shape[3]
-                self.activations.updateUnits(i, neurons)
+                self.spikes.updateUnits(i, neurons)
 
-
+    # Generate layers in the model
     def _make_layers(self):
         affine_flag = True
         bias_flag = False
@@ -92,13 +101,14 @@ class SNN_VGG(nn.Module):
         padding = (self.kernel_size-1)//2
         dilation = 2
 
-        self.scores_counter = -1
+        self.skips_counter = -1
 
+        # Generate feature layers
         in_channels = self.dataset['input_dim']
         divisor = 1
         layer = 0
         layers, bn_layers = [], []
-        self.pool_features, self.scores_features = {}, {}
+        self.pool_features, self.skips_features = {}, {}
         
         for x in (cfg_features[self.architecture]):
             if isinstance(x, str) and x[:3] == 'avg':
@@ -111,9 +121,9 @@ class SNN_VGG(nn.Module):
             elif isinstance(x, str) and x[:6] == 'atrous':
                 layers += [nn.Conv2d(in_channels, int(x[6:]), kernel_size=self.kernel_size, padding=(self.kernel_size-1), stride=stride, dilation=dilation, bias=bias_flag)]
                 in_channels = int(x[6:])
-            elif isinstance(x, str) and x == 'score':
-                self.scores_features[str(layer)] = nn.Conv2d(in_channels, self.dataset['num_cls'], kernel_size=1)
-                self.scores_counter += 1
+            elif isinstance(x, str) and x == 'skip':
+                self.skips_features[str(layer)] = nn.Conv2d(in_channels, self.dataset['num_cls'], kernel_size=1)
+                self.skips_counter += 1
                 continue
             else:
                 layers += [nn.Conv2d(in_channels, x, kernel_size=self.kernel_size, padding=padding, stride=stride, bias=bias_flag)]
@@ -124,13 +134,14 @@ class SNN_VGG(nn.Module):
 
         self.features = nn.ModuleList(layers)
         self.pool_features = nn.ModuleDict(self.pool_features)
-        self.scores_features = nn.ModuleDict(self.scores_features)
+        self.skips_features = nn.ModuleDict(self.skips_features)
         if self.bntt:
             self.bn_features = nn.ModuleList(bn_layers)
         
+        # Generate classifier layers
         layer = 0
         layers, bn_layers = [], []
-        self.pool_classifier, self.scores_classifier = {}, {}
+        self.pool_classifier, self.skips_classifier = {}, {}
 
         for x in (cfg_classifier[self.architecture]):
             if isinstance(x, str) and x[:3] == 'avg':
@@ -140,9 +151,9 @@ class SNN_VGG(nn.Module):
             elif isinstance(x, str) and x[:3] == 'max':
                 self.pool_classifier[str(layer)] = nn.MaxPool2d(kernel_size=self.kernel_size, stride=int(x[3:]), padding=padding)
                 continue
-            elif isinstance(x, str) and x == 'score':
-                self.scores_classifier[str(layer)] = nn.Conv2d(in_channels, self.dataset['num_cls'], kernel_size=1)
-                self.scores_counter += 1
+            elif isinstance(x, str) and x == 'skip':
+                self.skips_classifier[str(layer)] = nn.Conv2d(in_channels, self.dataset['num_cls'], kernel_size=1)
+                self.skips_counter += 1
                 continue
             elif isinstance(x, str) and x == 'output':
                 layers += [nn.Conv2d(in_channels, self.dataset['num_cls'], kernel_size=1, padding=0, stride=stride, bias=bias_flag)]
@@ -160,15 +171,16 @@ class SNN_VGG(nn.Module):
 
         self.classifier = nn.ModuleList(layers)
         self.pool_classifier = nn.ModuleDict(self.pool_classifier)
-        self.scores_classifier = nn.ModuleDict(self.scores_classifier)
+        self.skips_classifier = nn.ModuleDict(self.skips_classifier)
         if self.bntt:
             self.bn_classifier = nn.ModuleList(bn_layers)
 
         if self.fcn:
+            # Generate upsampling layers for FCN model
             layers = []
             height = self.img_size[0]
             width = self.img_size[1]
-            for _ in range(self.scores_counter):
+            for _ in range(self.skips_counter):
                 divisor = divisor//2
                 layers += [nn.Sequential(
                     nn.ConvTranspose2d(self.dataset['num_cls'], self.dataset['num_cls'], kernel_size=self.kernel_size, stride=2, bias=False),
@@ -176,7 +188,7 @@ class SNN_VGG(nn.Module):
                 )]
             self.upsample = nn.ModuleList(layers)
 
-
+    # Initialize all layer weights, biases, and thresholds
     def _init_layers(self):
         if self.bntt:
             for bnlist in self.bn_features:
@@ -186,7 +198,6 @@ class SNN_VGG(nn.Module):
                 for bn in bnlist:
                     bn.bias = None
 
-        # Initialize the firing thresholds and weights of all the layers
         for m in self.modules():
             if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d) or isinstance(m, nn.Linear):
                 if self.init == 'xavier':
@@ -201,15 +212,15 @@ class SNN_VGG(nn.Module):
                     m.bias.data.zero_()
 
                 m.threshold_pos = torch.tensor(self.def_threshold)
+                # Negative threshold for imbalanced thresholding (ibt)
                 m.threshold_neg = torch.tensor((-1/self.alpha)*self.def_threshold)
 
-
+    # Initialize all layer membrane potentials
     def _initialize_mems(self, N, layer=None, get_layer_shape=False):
-
         height = self.img_size[0]
         width = self.img_size[1]
 
-        # Initialize the neuronal membrane potentials
+        # Feature membrane potentials
         layers = []
         divisor = 1
         i = 0
@@ -227,6 +238,7 @@ class SNN_VGG(nn.Module):
             i += 1
         mem_features = layers
 
+        # Classifier membrane potentials
         layers = []
         for x in (cfg_classifier[self.architecture]):
             if isinstance(x, str) and x == 'output':
@@ -236,7 +248,7 @@ class SNN_VGG(nn.Module):
                 continue
             elif isinstance(x, str) and x[:6] == 'atrous':
                 x = int(x[6:])
-            elif isinstance(x, str) and x != 'score':
+            elif isinstance(x, str) and x != 'skip':
                 x = int(x.split('-')[0])
             else:
                 continue
@@ -247,8 +259,9 @@ class SNN_VGG(nn.Module):
         mem_classifier = layers
 
         if self.fcn:
+            # Upsampler membrane potentials
             layers = []
-            for _ in range(self.scores_counter):
+            for _ in range(self.skips_counter):
                 divisor = divisor//2
                 if isinstance(x, int):
                     layers += [torch.zeros(N, self.dataset['num_cls'], height//divisor, width//divisor).cuda()] if self.gpu else [torch.zeros(N, self.dataset['num_cls'], height//divisor, width//divisor)]
@@ -261,7 +274,7 @@ class SNN_VGG(nn.Module):
 
         return mem_features, mem_classifier
 
-
+    # Initialize value for mebrane potential
     def _init_max_mem(self, N, layer, threshold_type):
         layer_shape = self._initialize_mems(N, layer, get_layer_shape=True)
 
@@ -274,9 +287,8 @@ class SNN_VGG(nn.Module):
         else:
             return None
 
-
+    # Update thresholds for conversion with normalized thresholds
     def threshold_update(self, scaling_factor=1.0, thresholds=[], threshold_type='layer'):
-        # Initialize thresholds
         self.scaling_factor = scaling_factor
         
         for m in self.modules():
@@ -287,37 +299,44 @@ class SNN_VGG(nn.Module):
                 elif threshold_type == 'neuron':
                     v_th = (v_th[None, :, :, :]).cuda() if self.gpu else (v_th[None, :, :, :])
                 m.threshold_pos = torch.tensor(v_th)
+                # Negative threshold for imbalanced thresholding (ibt)
                 m.threshold_neg = torch.tensor((-1/self.alpha)*v_th)
 
-
+    # Forward propagation
     def forward(self, x, find_max_mem=False, max_mem_layer=0):
 
         N, C, H, W = x[-1].size() if self.thl else x.size()
 
         if self.count_spikes:
-            self.activations.updateCount(N)
+            self.spikes.updateCount(N)
 
+        # Initialize membrane potentials
         if self.fcn:
             mem_features, mem_classifier, mem_upsample = self._initialize_mems(N)
         else:
             mem_features, mem_classifier = self._initialize_mems(N)
 
-        spikes = []
+        skips = []
 
         max_mem = self._init_max_mem(N, max_mem_layer, find_max_mem)
 
         total_timesteps = (self.timesteps + len(mem_features) + len(mem_classifier)) if self.full_prop else self.timesteps
 
+        # Loop through all timesteps
         for t in range(total_timesteps):
             if t < self.timesteps:
+                # Use poisson generator or target history learning for input
                 out_prev = x[t] if self.thl else self.input_layer(x)
-            elif self.gpu:
-                out_prev = torch.zeros_like(x[-1]).cuda() if self.thl else torch.zeros_like(x).cuda()
             else:
-                out_prev = torch.zeros_like(x[-1]) if self.thl else torch.zeros_like(x)
+                # For full propagation, input zeros
+                if self.gpu:
+                    out_prev = torch.zeros_like(x[-1]).cuda() if self.thl else torch.zeros_like(x).cuda()
+                else:
+                    out_prev = torch.zeros_like(x[-1]) if self.thl else torch.zeros_like(x)
 
+            # Loop through all feature layers
             for k in range(len(self.features)):
-
+                # For conversion threshold normalization, find maximum activation
                 if find_max_mem and k == max_mem_layer:
                     if find_max_mem == 'layer':
                         ts_max = (self.features[k](out_prev)).max()
@@ -334,6 +353,7 @@ class SNN_VGG(nn.Module):
                         max_mem = ((ts_max > max_mem) * ts_max) + ((ts_max < max_mem) * max_mem)
                     break
 
+                # Leaky Integrate-and-Fire behavior
                 if ((not self.bntt) or (self.full_prop and t >= self.timesteps)):
                     mem_features[k] = (self.leak_mem * mem_features[k] + (self.features[k](out_prev)))
                 else:
@@ -350,11 +370,13 @@ class SNN_VGG(nn.Module):
                 out_prev            = out.clone()
 
                 if self.count_spikes:
-                    self.activations.updateSum(k, torch.sum(out.detach().clone()).item())
+                    self.spikes.updateSum(k, torch.sum(out.detach().clone()).item())
 
-                if (self.fcn) and (str(k+1) in self.scores_features.keys()):
-                    spikes.insert(0, self.scores_features[str(k+1)](out_prev))
+                # Handle skip connections for FCN
+                if (self.fcn) and (str(k+1) in self.skips_features.keys()):
+                    skips.insert(0, self.skips_features[str(k+1)](out_prev))
 
+                # Handle pooling layers
                 if str(k+1) in self.pool_features.keys():
                     out = self.pool_features[str(k+1)](out_prev)
                     out_prev = out.clone()
@@ -364,8 +386,9 @@ class SNN_VGG(nn.Module):
 
             prev = len(self.features)
 
+            # Loop through classifier layers
             for k in range(len(self.classifier) if self.fcn else (len(self.classifier) - 1)):
-                
+                # For conversion threshold normalization, find maximum activation
                 if find_max_mem and (prev + k) == max_mem_layer:
                     if find_max_mem == 'layer':
                         ts_max = (self.classifier[k](out_prev)).max()
@@ -382,6 +405,7 @@ class SNN_VGG(nn.Module):
                         max_mem = ((ts_max > max_mem) * ts_max) + ((ts_max < max_mem) * max_mem)
                     break
 
+                # Leaky Integrate-and-Fire behavior
                 if ((not self.bntt) or (self.full_prop and t >= self.timesteps)):
                     mem_classifier[k] = (self.leak_mem * mem_classifier[k] + (self.classifier[k](out_prev)))
                 else:
@@ -398,11 +422,13 @@ class SNN_VGG(nn.Module):
                 out_prev            = out.clone()
 
                 if self.count_spikes:
-                    self.activations.updateSum((prev+k), torch.sum(out.detach().clone()).item())
+                    self.spikes.updateSum((prev+k), torch.sum(out.detach().clone()).item())
                 
-                if (self.fcn) and (str(k+1) in self.scores_classifier.keys()):
-                    spikes.insert(0, self.scores_classifier[str(k+1)](out_prev))
+                # Handle skip connections for FCN
+                if (self.fcn) and (str(k+1) in self.skips_classifier.keys()):
+                    skips.insert(0, self.skips_classifier[str(k+1)](out_prev))
 
+                # Handle pooling layers
                 if str(k+1) in self.pool_classifier.keys():
                     out = self.pool_classifier[str(k+1)](out_prev)
                     out_prev = out.clone()
@@ -410,11 +436,12 @@ class SNN_VGG(nn.Module):
             if self.fcn:
                 prev += len(self.classifier)
 
-                out_prev = spikes[0]
+                out_prev = skips[0]
 
+                # Loop through upsampler layers
                 for k in range(len(self.upsample) - 1):
-
-                    mem_upsample[k]     = (self.leak_mem * mem_upsample[k] + (self.upsample[k](out_prev)) + spikes[k+1])
+                    # Leaky Integrate-and-Fire behavior
+                    mem_upsample[k]     = (self.leak_mem * mem_upsample[k] + (self.upsample[k](out_prev)) + skips[k+1])
                     mem_thr_pos         = (mem_upsample[k]/self.upsample[k].threshold_pos) - 1.0
                     if self.ibt:
                         mem_thr_neg 	= (mem_upsample/self.upsample[k].threshold_neg) - 1.0
@@ -427,12 +454,12 @@ class SNN_VGG(nn.Module):
                     out_prev            = out.clone()
 
                     if self.count_spikes:
-                        self.activations.updateSum((prev+k), torch.sum(out.detach().clone()).item())
+                        self.spikes.updateSum((prev+k), torch.sum(out.detach().clone()).item())
 
-            # compute last conv
+            # Compute last convolution
             if not find_max_mem:
                 if self.fcn:
-                    mem_upsample[k+1] = (1 * mem_upsample[k+1] + (self.upsample[k+1](out_prev)) + spikes[k+2])
+                    mem_upsample[k+1] = (1 * mem_upsample[k+1] + (self.upsample[k+1](out_prev)) + skips[k+2])
                 else:
                     mem_classifier[k+1] = (1 * mem_classifier[k+1] + self.classifier[k+1](out_prev))
 

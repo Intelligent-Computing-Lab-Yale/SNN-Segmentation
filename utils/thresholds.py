@@ -1,15 +1,23 @@
+"""
+
+Utility functions for thresholds.
+
+@author: Joshua Chough
+
+"""
+
 import torch
 import torch.nn as nn
 
+# Find maximum activation thresholds for all layers
 def find_thresholds(f, loader, model, config):
     thresholds = []
-    
+
+    # Find maximum activation threshold for a specific layer
     def find(layer):
-        
         max_act = 0
 
         for batch_idx, (data, target) in enumerate(loader):
-            
             if config.gpu:
                 data, target = data.cuda(), target.cuda()
 
@@ -28,6 +36,7 @@ def find_thresholds(f, loader, model, config):
 
                 break
 
+    # Find thresholds for all feature layers
     for l in model.features.named_children():
         if isinstance(l[1], nn.Conv2d):
             find(int(l[0]))
@@ -35,6 +44,7 @@ def find_thresholds(f, loader, model, config):
     
     print()
     
+    # Find thresholds for all classifier layers
     for c in model.classifier.named_children():
         if isinstance(c[1], nn.Conv2d) and int(c[0]) < (len(model.classifier)-1):
             find(int(l[0]) + int(c[0]) + 1)

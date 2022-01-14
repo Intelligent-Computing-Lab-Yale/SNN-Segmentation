@@ -1,3 +1,11 @@
+"""
+
+Custom dataset for VOC2012.
+
+@author: Joshua Chough
+
+"""
+
 import torch
 import numpy as np
 import imageio

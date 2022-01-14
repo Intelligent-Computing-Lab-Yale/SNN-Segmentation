@@ -1,6 +1,10 @@
-#############################################
-#   @author:                                #
-#############################################
+"""
+
+Train an ANN or SNN for semantic segmentation.
+
+@author: Joshua Chough
+
+"""
 
 #--------------------------------------------------
 # Imports
@@ -96,36 +100,42 @@ if args.thl and ((args.dataset != 'ddd17') or (args.model_type != 'snn')):
 #--------------------------------------------------
 run, f, config, trainloader, testloader, model, criterion, optimizer, scheduler, now, state = setup('train', args)
 
+#--------------------------------------------------
+# Train the model
+#--------------------------------------------------
 with run:
-    # tell wandb to watch what the model gets up to
+    # Tell wandb to watch what the model gets up to
     wandb.watch(model, log='all', log_freq=10)
 
-    #--------------------------------------------------
-    # Train the using surrogate gradients
-    #--------------------------------------------------
     f.write('********** {} training and evaluation **********'.format(config.model_type))
     max_miou = 0
     min_loss = 10
     wandb.run.summary["best_miou"] = max_miou
     wandb.run.summary["best_loss"] = min_loss
 
+    # Loop through all epochs
     for epoch in range(1, config.epochs+1):
         train_loss = AverageMeter()
         model.train()
         start_time = datetime.datetime.now()
 
+        # Loop through all batches in training dataset
         for batch_idx, (data, labels) in enumerate(trainloader):
-            
             if config.gpu:
                 data = [datum.cuda() for datum in data] if config.thl else data.cuda()
                 labels = labels.cuda()
 
+            # Zero gradients
             optimizer.zero_grad()
+
+            # Forward prop
             outputs = model(data)
 
+            # Calculate loss
             loss = criterion(outputs, labels)
             train_loss.update(loss.item(), labels.size(0))
 
+            # Backward prop
             loss.backward()
             optimizer.step()
 
@@ -138,18 +148,22 @@ with run:
         if args.first:
             print('')
 
+        # Step learning rate scheduler
         scheduler.step()
 
         if args.debug or ((epoch) % args.train_display == 0):
+            # Display training stats
             duration = datetime.timedelta(seconds=(datetime.datetime.now() - start_time).seconds)
             f.write('Training progress: {:05.2f}% [Epoch {:03d}/{:03d}] | Loss: {:.6f} | LR: {:.6f} [{}]'.format(round(((epoch/config.epochs)*100), 2), epoch, config.epochs, train_loss.avg, optimizer.param_groups[0]['lr'], duration))
-            wandb.log({'epoch': epoch, 'loss': train_loss.avg, 'lr': optimizer.param_groups[0]['lr'], 'train_duration_mins': (duration.seconds / 60)}, step=epoch)
 
+            # Send training stats to wandb
+            wandb.log({'epoch': epoch, 'loss': train_loss.avg, 'lr': optimizer.param_groups[0]['lr'], 'train_duration_mins': (duration.seconds / 60)}, step=epoch)
             if train_loss.avg < min_loss:
                 min_loss = train_loss.avg
                 wandb.run.summary['best_loss'] = min_loss
 
         if args.first or ((epoch) % args.test_display == 0):
+            # Test model
             max_miou = test('train', f, config, args, testloader, model, state, epoch, max_miou, start_time=start_time)
 
         if args.first and epoch == 1:

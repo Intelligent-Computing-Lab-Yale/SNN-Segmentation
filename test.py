@@ -1,6 +1,10 @@
-#############################################
-#   @author:                                #
-#############################################
+"""
+
+Evaluate a model or convert an ANN to an SNN for semantic segmentation.
+
+@author: Joshua Chough
+
+"""
 
 #--------------------------------------------------
 # Imports
@@ -26,19 +30,23 @@ from glob import glob
 from utils import *
 from setup import setup
 
+#--------------------------------------------------
+# Test function
+#--------------------------------------------------
 def test(phase, f, config, args, testloader, model, state=None, epoch=0, max_miou=0, start_time=None, num_plot=16):
-
     if not start_time:
         start_time = datetime.datetime.now()
 
+    # Evaluate model
     with torch.no_grad():
         model.eval()
 
         gts, preds = [], []
         examples = None
 
+        # Loop through all batches in testing dataset
         for batch_idx, (data, labels) in enumerate(testloader):
-
+            # Skip extraneous batches if debugging
             if args.debug and (batch_idx + 1) != config.plot_batch:
                 if phase == 'test':
                     f.write('Batch {} .................... skipped'.format(batch_idx + 1), end=('\r' if (batch_idx % 10) < 9 else '\n'), r_white=True)
@@ -47,17 +55,20 @@ def test(phase, f, config, args, testloader, model, state=None, epoch=0, max_mio
                     data = [datum.cuda() for datum in data] if config.thl else data.cuda()
                     labels = labels.cuda()
                 
+                # Forward prop
                 outputs = model(data)
                 pred = outputs.max(1,keepdim=True)[1].cpu().numpy()
                 gt = labels.cpu().numpy()
 
+                # Save inputs, predictions, and ground truths for a specific batch
                 if (batch_idx + 1) == config.plot_batch:
                     temp2 = {}
                     temp2['data'] = data.squeeze().cpu().numpy()
                     temp2['preds'] = outputs.max(1,keepdim=True)[1].squeeze().cpu().numpy()
-                    temp2['gts']   = labels.squeeze().cpu().numpy()
+                    temp2['gts'] = labels.squeeze().cpu().numpy()
                     examples = zip(temp2['data'][:num_plot], temp2['preds'][:num_plot], temp2['gts'][:num_plot])
 
+                # Save predictions and ground truths
                 gts.append(gt)
                 preds.append(pred)
 
@@ -67,9 +78,11 @@ def test(phase, f, config, args, testloader, model, state=None, epoch=0, max_mio
             if args.debug and (batch_idx + 1) == config.plot_batch:
                 break
 
+            # During testing, display evaluation stats
             if phase == 'test':
                 f.write('Evaluating progress: {:05.2f}% [Batch {:04d}/{:04d}]'.format(round((batch_idx + 1) / len(testloader) * 100, 2), batch_idx + 1, len(testloader)), end='\r')
 
+    # Display spike stats
     if phase == 'test' and args.count_spikes:
         f.write('Average total spikes per example per layer: {}'.format(model.spikes.average()))
         f.write('Average neuronal spike rate per example per layer: {}'.format(model.spikes.rate()))
@@ -95,14 +108,15 @@ def test(phase, f, config, args, testloader, model, state=None, epoch=0, max_mio
 
         wandb.log({"total_spikes": model.spikes.totalAverage(), "spike_rate": model.spikes.totalRate(), "total_neurons": model.spikes.totalUnits()}, step=epoch)
 
+    # Calculate mean IoU
     score, class_iou, count = scores(gts, preds, config.dataset['num_cls'], config.batch_size_test, config.plot_batch, f)
 
     if score['Mean IoU'] > max_miou:
         max_miou = score['Mean IoU']
         wandb.run.summary["best_miou"] = max_miou
 
+        # During training, save model weights and config if new maximum mean IoU is found
         if (not args.debug) and phase == 'train':
-
             state = {
                 **state,
                 'max_miou'              : max_miou,
@@ -110,22 +124,11 @@ def test(phase, f, config, args, testloader, model, state=None, epoch=0, max_mio
                 'state_dict'            : model.state_dict(),
             }
 
-            # if config.conversion:
-            #     keys = model.get_keys()
-            #     parameters = {}
-            #     for key in model.state_dict().keys():
-            #         if key in keys.keys():
-            #             parameters[keys[key]] = nn.Parameter(model.state_dict()[key].data)
-            #     state = { **state, 'parameters' : parameters}
-
             filename = args.model_dir+config.identifier+'.pth'
             torch.save(state, filename)
             
             filename = os.path.join(wandb.run.dir, config.identifier+'.pth')
             torch.save(state, filename)
-
-            # filename = os.path.join(wandb.run.dir, config.identifier+'.onnx')
-            # torch.onnx.export(model, data, filename, export_params=True, opset_version=11)
         
         if phase == 'train':
             identifier = 'examples'
@@ -135,12 +138,17 @@ def test(phase, f, config, args, testloader, model, state=None, epoch=0, max_mio
             else:
                 identifier = '{}_examples'.format('batch' + str(config.plot_batch))
 
-        # Plot examples
+        # Plot examples for specific batch
         if args.plot:
+            # Use matplotlib
             cnt = 0
             columns = 4
+
             plt.figure(figsize=(45,((30/32)*config.batch_size_test)))
+
+            # Loop through all examples
             for i, ex in enumerate(examples):
+                # Loop through the images for input, prediction, and ground truth
                 for j in range(len(ex)):
                     cnt += 1
                     plt.subplot(config.batch_size_test//columns,len(ex)*columns,cnt)
@@ -176,12 +184,14 @@ def test(phase, f, config, args, testloader, model, state=None, epoch=0, max_mio
                             elif config.dataset['name'] == 'ddd17':
                                 plt.imshow(np.squeeze(image).astype(np.uint8), cmap='viridis', vmin=0, vmax=config.dataset['num_cls']-1)
                         np.set_printoptions(suppress=False, formatter=None, linewidth=75)
+
             if args.plot_labels:
                 plt.suptitle('{} batch {} examples'.format(config.identifier, config.plot_batch), fontsize=20)
                 plt.subplots_adjust(top=0.97)
 
             wandb.log({identifier: plt}, step=epoch)
         else:
+            # Use wandb masking feature
             mask_list = []
             for i, (data, pred, gt) in enumerate(examples):
                 if config.dataset['name'] == 'voc2012':
@@ -197,6 +207,7 @@ def test(phase, f, config, args, testloader, model, state=None, epoch=0, max_mio
 
             wandb.log({identifier: mask_list}, step=epoch)
 
+    # During training, display evaluation stats
     if phase == 'train':
         duration = datetime.timedelta(seconds=(datetime.datetime.now() - start_time).seconds)
         f.write('--------------- Evaluation -> miou: {:.3f}, best: {:.3f}, time: {}'.format(score['Mean IoU'], max_miou, duration))
@@ -254,10 +265,6 @@ if __name__ == '__main__':
     global args
     args = p.parse_args()
 
-    #--------------------------------------------------
-    # Initialize arguments
-    #--------------------------------------------------
-
     if args.augment and args.attack:
         raise RuntimeError('You can\'t use the --augment command with the --attack command')
 
@@ -267,7 +274,9 @@ if __name__ == '__main__':
     if args.print_models and args.model_path:
         raise RuntimeError('You can\'t use the --model_path command with the --print_models command')
 
-
+    #--------------------------------------------------
+    # Find model path
+    #--------------------------------------------------
     if args.model_path and args.model_path.isdigit():
         args.model_path = int(args.model_path)
 
@@ -289,7 +298,6 @@ if __name__ == '__main__':
         args.model_path = pretrained_models[val]
     print(args.model_path)
 
-
     #--------------------------------------------------
     # Setup
     #--------------------------------------------------
@@ -299,10 +307,10 @@ if __name__ == '__main__':
 
     run, f, config, testloader, model, now = setup('test', args)
 
+    #--------------------------------------------------
+    # Evaluate the model
+    #--------------------------------------------------
     with run:
-        #--------------------------------------------------
-        # Evaluate the model
-        #--------------------------------------------------
         f.write('********** ({}) {} evaluation **********'.format(factor, config.model_type.upper()))
         max_miou = test('test', f, config, args, testloader, model)
 

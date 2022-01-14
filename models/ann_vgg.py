@@ -1,3 +1,11 @@
+"""
+
+ANN model module.
+
+@author: Joshua Chough
+
+"""
+
 #---------------------------------------------------
 # Imports
 #---------------------------------------------------
@@ -6,6 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 
+# Feature architectures
 cfg_features = {
     'dl-vgg9':  [64, 64, 'avg2', 128, 128, 'avg2', 256, 'atrous256', 'atrous256'],
     'dl-vgg11': [64, 'avg2', 128, 'avg2', 256, 256, 'avg2', 512, 512, 'avg1', 'atrous512', 'atrous512'],
@@ -13,6 +22,7 @@ cfg_features = {
     'fcn-vgg9':  [64, 64, 'score', 'avg2', 128, 128, 'score', 'avg2', 256, 256, 256, 'score', 'avg2'],
 }
 
+# Classifier architectures
 cfg_classifier = {
     'dl-vgg9':  ['atrous1024', 'output'], #! don't need avg pooling?
     'dl-vgg11':  ['atrous1024', '1024-1-0', 'output'],
@@ -49,7 +59,7 @@ class ANN_VGG(nn.Module):
                 state_vgg['0.weight'] = model_dict['0.weight'] # 1. change first weight
                 self.features.load_state_dict(state_vgg, strict=False) # 2. load the new state dict
 
-
+    # Generate layers in the model
     def _make_layers(self):
         bias_flag = False
         affine_flag = False
@@ -57,13 +67,14 @@ class ANN_VGG(nn.Module):
         padding = (self.kernel_size-1)//2
         dilation = 2
 
-        scores_counter = -1
+        self.skips_counter = -1
 
+        # Generate feature layers
         in_channels = self.dataset['input_dim']
         layer = 0
         divisor = 1
         layers, bn_layers, relu_layers = [], [], []
-        self.pool_features, self.scores_features = {}, {}
+        self.pool_features, self.skips_features = {}, {}
 
         for x in (cfg_features[self.architecture]):
             if isinstance(x, str) and x[:3] == 'avg':
@@ -74,8 +85,8 @@ class ANN_VGG(nn.Module):
                 self.pool_features[str(layer)] = nn.MaxPool2d(kernel_size=self.kernel_size, stride=int(x[3:]), padding=padding)
                 continue
             elif isinstance(x, str) and x == 'score':
-                self.scores_features[str(layer)] = nn.Conv2d(in_channels, self.dataset['num_cls'], kernel_size=1)
-                scores_counter += 1
+                self.skips_features[str(layer)] = nn.Conv2d(in_channels, self.dataset['num_cls'], kernel_size=1)
+                self.skips_counter += 1
                 continue
             elif isinstance(x, str) and x[:6] == 'atrous':
                 layers += [nn.Conv2d(in_channels, int(x[6:]), kernel_size=self.kernel_size, padding=(self.kernel_size - 1), stride=stride, dilation=dilation, bias=bias_flag)]
@@ -90,14 +101,15 @@ class ANN_VGG(nn.Module):
         
         self.features = nn.ModuleList(layers)
         self.pool_features = nn.ModuleDict(self.pool_features)
-        self.scores_features = nn.ModuleDict(self.scores_features)
+        self.skips_features = nn.ModuleDict(self.skips_features)
         if self.bn:
             self.bn_features = nn.ModuleList(bn_layers)
         self.relu_features = nn.ModuleList(relu_layers)
         
+        # Generate classifier layers
         layer = 0
         layers, bn_layers, relu_layers = [], [], []
-        self.pool_classifier, self.scores_classifier = {}, {}
+        self.pool_classifier, self.skips_classifier = {}, {}
 
         for x in (cfg_classifier[self.architecture]):
             if isinstance(x, str) and x[:3] == 'avg':
@@ -108,8 +120,8 @@ class ANN_VGG(nn.Module):
                 self.pool_classifier[str(layer)] = nn.MaxPool2d(kernel_size=self.kernel_size, stride=int(x[3:]), padding=padding)
                 continue
             elif isinstance(x, str) and x == 'score':
-                self.scores_classifier[str(layer)] = nn.Conv2d(in_channels, self.dataset['num_cls'], kernel_size=1)
-                scores_counter += 1
+                self.skips_classifier[str(layer)] = nn.Conv2d(in_channels, self.dataset['num_cls'], kernel_size=1)
+                self.skips_counter += 1
                 continue
             elif isinstance(x, str) and x == 'output':
                 layers += [nn.Conv2d(in_channels, self.dataset['num_cls'], kernel_size=1, padding=0, stride=stride, bias=bias_flag)]
@@ -128,16 +140,17 @@ class ANN_VGG(nn.Module):
 
         self.classifier = nn.ModuleList(layers)
         self.pool_classifier = nn.ModuleDict(self.pool_classifier)
-        self.scores_classifier = nn.ModuleDict(self.scores_classifier)
+        self.skips_classifier = nn.ModuleDict(self.skips_classifier)
         if self.bn:
             self.bn_classifier = nn.ModuleList(bn_layers)
         self.relu_classifier = nn.ModuleList(relu_layers)
 
         if 'fcn' in self.architecture:
+            # Generate upsampling layers for FCN model
             layers = []
             height = self.img_size[0]
             width = self.img_size[1]
-            for _ in range(scores_counter):
+            for _ in range(self.skips_counter):
                 divisor = divisor//2
                 layers += [nn.Sequential(
                     nn.ConvTranspose2d(self.dataset['num_cls'], self.dataset['num_cls'], kernel_size=self.kernel_size, stride=2, bias=False),
@@ -145,9 +158,8 @@ class ANN_VGG(nn.Module):
                 )]
             self.upsample = nn.ModuleList(layers)
 
-
+    # Initialize all layer weights and biases
     def _init_layers(self):
-        # Initialize the weights of all the layers
         for m in self.modules():
             if isinstance(m, nn.Conv2d)  or isinstance(m, nn.ConvTranspose2d) or isinstance(m, nn.Linear):
                 if self.init == 'xavier':
@@ -161,43 +173,53 @@ class ANN_VGG(nn.Module):
                 if m.bias is not None:
                     m.bias.data.zero_()
 
-
+    # Forward propagation
     def forward(self, x, f=None):
         N, C, H, W = x.size()
         out = x
-        spikes = []
+        skips = []
 
+        # Loop through all feature layers
         for k in range(len(self.features)):
+            # Compute activations
             if not self.bn:
                 out = self.features[k](out)
             else:
                 out = self.bn_features[k](self.features[k](out))
             out = self.relu_features[k](out)
 
-            if ('fcn' in self.architecture) and (str(k+1) in self.scores_features.keys()):
-                spikes.insert(0, self.scores_features[str(k+1)](out))
+            # Handle skip connections for FCN
+            if ('fcn' in self.architecture) and (str(k+1) in self.skips_features.keys()):
+                skips.insert(0, self.skips_features[str(k+1)](out))
 
+            # Handle pooling layers
             if str(k+1) in self.pool_features.keys():
                 out = self.pool_features[str(k+1)](out)
 
+        # Loop through all classifier layers
         for k in range(len(self.classifier) if 'fcn' in self.architecture else (len(self.classifier) - 1)):
+            # Compute activations
             if not self.bn:
                 out = self.classifier[k](out)
             else:
                 out = self.bn_classifier[k](self.classifier[k](out))
             out = self.relu_classifier[k](out)
 
-            if ('fcn' in self.architecture) and (str(k+1) in self.scores_classifier.keys()):
-                spikes.insert(0, self.scores_classifier[str(k+1)](out))
+            # Handle skip connections for FCN
+            if ('fcn' in self.architecture) and (str(k+1) in self.skips_classifier.keys()):
+                skips.insert(0, self.skips_classifier[str(k+1)](out))
 
+            # Handle pooling layers
             if str(k+1) in self.pool_classifier.keys():
                 out = self.pool_classifier[str(k+1)](out)
 
         if 'fcn' in self.architecture:
-            out = spikes[0]
+            # Loop through all upsampler layers
+            out = skips[0]
 
+            # Handle pooling layers
             for k in range(len(self.upsample)):
-                out = self.upsample[k](out) + spikes[k+1]
+                out = self.upsample[k](out) + skips[k+1]
         else:
             out = self.classifier[k+1](out)
             out = F.interpolate(out, (H, W), mode='bilinear', align_corners=True)

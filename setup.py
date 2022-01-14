@@ -1,6 +1,10 @@
-#############################################
-#   @author:                                #
-#############################################
+"""
+
+Setup an environment for training or testing for semantic segmentation.
+
+@author: Joshua Chough
+
+"""
 
 #--------------------------------------------------
 # Imports
@@ -21,17 +25,18 @@ from utils import *
 from models import *
 from data import *
 
+#--------------------------------------------------
+# Setup function
+#--------------------------------------------------
 def setup(phase, args):
-    #--------------------------------------------------
     # Initialize seed
-    #--------------------------------------------------
     seed = args.seed
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
     #--------------------------------------------------
-    # Configuration parameters
+    # Initialize configuration parameters
     #--------------------------------------------------
     now = datetime.datetime.now() # current date and time
     date_time = now.strftime('%y%m%d-%H%M%S')
@@ -43,6 +48,7 @@ def setup(phase, args):
         pass
 
     if phase == 'train':
+        # Training parameters
         config = dict(
             # Processing
             seed                = args.seed,
@@ -84,9 +90,11 @@ def setup(phase, args):
             count_spikes        = None,
         )
     elif phase == 'test':
+        # Testing parameters
         model_path = args.model_path
         conversion = True if (args.conversion or ('conversion' in model_path)) else False
 
+        # Use configuration parameters from pretrained model
         state = torch.load(model_path, map_location='cpu')
         old_config = state['config']
 
@@ -139,7 +147,6 @@ def setup(phase, args):
     #--------------------------------------------------
     # Initialize wandb settings
     #--------------------------------------------------
-
     # Generate tags
     tags = []
     if (args.debug):
@@ -166,15 +173,16 @@ def setup(phase, args):
         mode=args.wandb_mode
     )
 
-    # Model identifier
+    # Generate model identifier
     identifier = createIdentifier((date, run.name, wandb.config.model_type, wandb.config.architecture, wandb.config.dataset['name'], args.file_name))
     wandb.config.update({'identifier': identifier})
 
     config = wandb.config
 
-    # Print wrapper
+    # Use a wrapper for printing
     f = File(False)
 
+    # Display run information
     if (args.debug):
         f.write('------------ D E V E L O P M E N T   M O D E -------------', start='\n', end='\n\n')
     f.write('Run on time: {}'.format(now))
@@ -184,6 +192,7 @@ def setup(phase, args):
         if config.conversion:
             f.write('==== Converting ANN -> SNN [{}-wise thresholding] ===='.format(config.threshold_type), terminal=True)
     
+    # Display parameters
     if args.info:
         f.write('=== [{}] CONFIGURATION ==='.format(run.name), start='\n')
         for key in config.keys():
@@ -197,25 +206,23 @@ def setup(phase, args):
     #--------------------------------------------------
     # Load dataset
     #--------------------------------------------------
+    # Create dataloaders from custom datasets for training and/or testing
     if config.dataset['name'] == 'voc2012':
-
         if phase == 'train' or conversion:
             train_dataset = VOC2012(config.dataset['path'], split="train_aug", is_transform=True, img_size=config.img_size)
             trainloader = DataLoader(train_dataset, batch_size=config.batch_size, num_workers=config.num_workers, shuffle=True)
-
         test_dataset = VOC2012(config.dataset['path'], split="val", is_transform=True, img_size=config.img_size, attack=config.attack, atk_factor=config.atk_factor)
         testloader = DataLoader(test_dataset, batch_size=config.batch_size_test, num_workers=config.num_workers, shuffle=False)
     elif config.dataset['name'] == 'ddd17':
-
         if phase == 'train' or conversion:
             train_dataset = DDD17(config.dataset['path'], split="train", is_transform=True, is_augment=config.augment, img_size=config.img_size, mod=True, thl=config.thl, thl_size=config.timesteps)
             trainloader = DataLoader(train_dataset, batch_size=config.batch_size, num_workers=config.num_workers, shuffle=True)
-
         test_dataset = DDD17(config.dataset['path'], split="test", is_transform=True, is_augment=False, attack=config.attack, img_size=config.img_size, mod=True, thl=config.thl, thl_size=config.timesteps, atk_factor=config.atk_factor)
         testloader = DataLoader(test_dataset, batch_size=config.batch_size_test, num_workers=config.num_workers, shuffle=False)
     else:
         raise RuntimeError("dataset not valid..")
 
+    # Display dataset stats
     if phase == 'train' or config.conversion:
         f.write('loaded {} train split [{} samples]'.format(config.dataset['name'], (len(trainloader)*config.batch_size)))
     f.write('loaded {} test split [{} samples]'.format(config.dataset['name'], (len(testloader)*config.batch_size_test)))
@@ -229,8 +236,6 @@ def setup(phase, args):
         model = ANN_VGG(config=config)
     else:
         raise RuntimeError("architecture not valid..")
-    
-    # print(model)
 
     if config.gpu:
         model = model.cuda()
@@ -239,16 +244,19 @@ def setup(phase, args):
         f.write(model)
 
     if phase == 'test':
+        # Load weights from pretrained model
         state = torch.load(args.model_path, map_location='cpu')
         model.load_state_dict(state['state_dict'], strict=False)
 
+        # If using ANN/SNN conversion, load or find the maximum activation thresholds (threshold normalization)
         if config.conversion:
-            # If thresholds present in loaded ANN file
             if (not args.reset_thresholds) and ('thresholds' in state.keys()) and (config.threshold_type in state['thresholds'].keys()) and (str(config.timesteps) in state['thresholds'][config.threshold_type].keys()):
+                # If thresholds present in loaded ANN file, load thresholds
                 thresholds = state['thresholds'][config.threshold_type][str(config.timesteps)]
                 f.write('Loaded {} thresholds ({}) from {}'.format(config.threshold_type, config.timesteps, args.model_path))
                 model.threshold_update(scaling_factor=config.scaling_factor, thresholds=thresholds[:], threshold_type=config.threshold_type)
             else:
+                # If thresholds not present in loaded ANN file, find thresholds
                 thresholds = find_thresholds(f, trainloader, model, config)
                 model.threshold_update(scaling_factor=config.scaling_factor, thresholds=thresholds[:], threshold_type=config.threshold_type)
                 
@@ -261,8 +269,8 @@ def setup(phase, args):
                 torch.save(state, args.model_path)
                 f.write('Saved {} thresholds ({}) in {}'.format(config.threshold_type, config.timesteps, args.model_path))
 
+    # For training, configure the loss function, optimizer, and learning rate scheduler
     if phase == 'train':
-        # Configure the loss function and optimizer
         criterion = nn.CrossEntropyLoss()
 
         if config.optimizer == 'adam':
@@ -278,7 +286,6 @@ def setup(phase, args):
     #--------------------------------------------------
     # Prepare state objects
     #--------------------------------------------------
-
     # Prepare state to be saved with trained model
     if phase == 'train':
         state = {

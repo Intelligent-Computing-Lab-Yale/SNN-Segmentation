@@ -1,5 +1,14 @@
+"""
+
+Utility functions for custom files and identifiers.
+
+@author: Joshua Chough
+
+"""
+
 import sys
 
+# Custom class for file or printing information
 class File():
     def __init__(self, log, name, mode='w'):
         if log:
@@ -17,6 +26,7 @@ class File():
         if self.mode == 'sys' or terminal:
             print(msg, end=end, flush=('\r' in end))
 
+# Find nth iteration of needle string in haystack string
 def find_nth(haystack, needle, n):
     if n == 0:
         return n
@@ -26,6 +36,7 @@ def find_nth(haystack, needle, n):
         n -= 1
     return start
 
+# Find argument at argument index in file path
 def find_arg(path, parent_dir, arg_index):
     if parent_dir:
         path = path.replace(parent_dir, '')
@@ -34,6 +45,7 @@ def find_arg(path, parent_dir, arg_index):
     arg = path[(start + 1 if start > 0 else start):end]
     return arg
 
+# Create identifier for file name
 def createIdentifier(args):
     identifier = ''
     for arg in args:

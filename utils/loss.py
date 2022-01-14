@@ -1,5 +1,14 @@
+"""
+
+Utility functions for the loss.
+
+@author: Joshua Chough
+
+"""
+
 import torch.nn.functional as F
 
+# Compute 2D cross entropy loss
 def CrossEntropyLoss2d(inputs, targets, weight=None):
     n, c, h, w = inputs.size()
     log_p = F.log_softmax(inputs, dim=1)
@@ -12,11 +21,8 @@ def CrossEntropyLoss2d(inputs, targets, weight=None):
     loss = F.nll_loss(log_p, targets, weight=weight)
     return loss
 
+# Custom class for computing and storing average and current values
 class AverageMeter(object):
-    """
-    Computes and stores the average and current value
-    """
-
     def __init__(self):
         self.reset()
 

@@ -1,3 +1,11 @@
+"""
+
+Spike classes and custom poisson generator for SNNs.
+
+@author: Joshua Chough
+
+"""
+
 #---------------------------------------------------
 # Imports
 #---------------------------------------------------

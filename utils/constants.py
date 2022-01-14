@@ -1,6 +1,14 @@
+"""
+
+Constant values.
+
+@author: Joshua Chough
+
+"""
+
 from matplotlib.colors import ListedColormap
 
-# dataset labels
+# Dataset labels
 labels = dict(
     voc2012={
         0: 'background',
@@ -35,13 +43,13 @@ labels = dict(
     }
 )
 
-# dataset orig img sizes
+# Dataset orig img sizes
 img_sizes = dict(
     voc2012=(256, 256),
     ddd17=(200, 346)
 )
 
-# Dataset Config Class
+# Custom dataset configuration class
 class DatasetConfig():
 
     def __init__(self, name, input_dim, hasClasses=True, path=''):
@@ -62,7 +70,7 @@ class DatasetConfig():
             img_size=self.img_size
         )
 
-# dataset configs
+# Dataset configurations
 dataset_cfg = dict(
     voc2012=DatasetConfig(
         name='voc2012',
@@ -74,16 +82,7 @@ dataset_cfg = dict(
     ).dictionary()
 )
 
-# paths
-paths = {
-        'voc_path' : './data/VOC2012',
-        'sbd_path' : '../data/benchmark_RELEASE/',
-        'deeplab_ann_path' : './trained_models/deeplab/',
-        'deeplab_ann_leaky_path' : './trained_models/deeplab_leaky/',
-        'deeplab_snn_path' : './trained_models/deeplab_snn/'
-        }
-
-# voc2012 color map
+# VOC2012 color map
 '''
 color map
 0=background, 1=aeroplane, 2=bicycle, 3=bird, 4=boat, 5=bottle, 6=bus, 7=car, 8=cat, 9=chair, 10=cow, 11=diningtable,

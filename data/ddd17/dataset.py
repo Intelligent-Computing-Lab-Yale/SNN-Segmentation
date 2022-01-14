@@ -1,3 +1,11 @@
+"""
+
+Custom dataset for DDD17
+
+@author: Joshua Chough
+
+"""
+
 import torch
 import numpy as np
 import imageio
@@ -41,7 +49,6 @@ class DDD17(data.Dataset):
         return (len(self.files) - self.thl_size) if (self.thl or self.thl_rt) else len(self.files)
 
     def __getitem__(self, index):
-
         if self.is_augment:
             flip_p = round(random.random())
             scale = random.uniform(0.50, 2)
@@ -98,7 +105,6 @@ class DDD17(data.Dataset):
             return img, lbl
 
     def transform(self, img, lbl, augments=None):
-        
         # Take the first 2 channels (out of 6)
         img = img[:,:,:2]
 

@@ -1,3 +1,11 @@
+"""
+
+Utility functions for computing accuracy metrics.
+
+@author: Joshua Chough
+
+"""
+
 import numpy as np
 
 np.seterr(divide='ignore', invalid='ignore')
@@ -8,7 +16,7 @@ def _fast_hist(label_true, label_pred, n_class, f=None):
 
     return hist
 
-
+# Compute accuracies and mean IoU
 def scores(label_trues, label_preds, n_class, batch_size, count_batch, f=None):
     count = np.zeros((batch_size, 2, n_class))
     hist = np.zeros((n_class, n_class))

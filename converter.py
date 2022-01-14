@@ -1,7 +1,19 @@
+"""
+
+Change the format of a pretrained model file's state_dict/thresholds objects.
+
+@author: Joshua Chough
+
+"""
+
 import torch
 import torch.nn as nn
 from glob import glob
 
+
+#--------------------------------------------------
+# Select pretrained model
+#--------------------------------------------------
 model_dir = './trained_models/'
 
 pretrained_models = sorted(glob(model_dir + '*.pth'))
@@ -16,13 +28,13 @@ pretrained_model = pretrained_models[val]
 
 state = torch.load(pretrained_model, map_location='cpu')
 
+#--------------------------------------------------
+# Choose options
+#--------------------------------------------------
 options = {
     'mode': ['convert state_dict', 'convert thresholds']
 }
 
-# -----------------
-# SETUP
-# -----------------
 args = {}
 for i, key in enumerate(options.keys()):
     if input('{} [{}] (type \'c\' to change)? '.format(key, options[key][0])) == 'c':
@@ -34,8 +46,10 @@ for i, key in enumerate(options.keys()):
         args[key] = options[key][0]
 print('{}'.format(args))
 
+#--------------------------------------------------
+# Reformat state_dict/thresholds
+#--------------------------------------------------
 if args['mode'] == 'convert state_dict':
-
     state_dict = state['state_dict']
 
     print('\n ---------- Keys for {} state_dict ----------'.format(pretrained_model[17:]))
@@ -70,7 +84,6 @@ if args['mode'] == 'convert state_dict':
     state['state_dict'] = state_dict
 
 elif args['mode'] == 'convert thresholds':
-
     if 'thresholds' not in state.keys():
         print('\'thresholds\' not in state')
         exit()
@@ -98,6 +111,9 @@ print('\n ---------- Keys for conversion state ----------')
 for key, value in state.items():
     print('{}'.format(key))
 
+#--------------------------------------------------
+# Save updated pretrained file
+#--------------------------------------------------
 if input('Change file name [{}] (c to change)? '.format(pretrained_model)) == 'c':
     path = pretrained_model[:-4] + '_' + input('Name of new file: ') + '.pth'
 else:

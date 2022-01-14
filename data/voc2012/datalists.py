@@ -1,3 +1,11 @@
+"""
+
+Generate datalists for VOC2012 dataset.
+
+@author: Joshua Chough
+
+"""
+
 def find_nth(haystack, needle, n):
     start = haystack.find(needle)
     while start >= 0 and n > 1:
@@ -5,7 +13,7 @@ def find_nth(haystack, needle, n):
         n -= 1
     return start
 
-txt_directory = 'ImageSets/Segmentation/'
+list_directory = 'datalists/'
 split = input('split [val-old/train_aug-old]\n> ')
 
 if split not in ('val-old', 'train_aug-old'):
@@ -13,7 +21,7 @@ if split not in ('val-old', 'train_aug-old'):
 
 paths = []
 
-f = open(txt_directory + split + '.txt', "r")
+f = open(list_directory + split + '.txt', "r")
 for line in f:
     if split == 'val-old':
         filename = line[:-1]
@@ -24,7 +32,7 @@ for line in f:
 print('{} split size: {}'.format(split, len(paths)))
 # exit()
 
-txt_path = txt_directory + input('File name for {} split: '.format(split)) + '.txt'
-with open(txt_path, 'w') as a:
+list_path = list_directory + input('File name for {} split: '.format(split)) + '.txt'
+with open(list_path, 'w') as a:
     for path in paths:
         a.write(path)

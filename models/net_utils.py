@@ -1,7 +1,13 @@
+"""
+
+Model utilities.
+
+@author: Joshua Chough
+
+"""
+
+# Custom class for computing and storing lists of values for a network
 class AverageMeterNetwork(object):
-    """
-    Computes and stores lists of values for the network
-    """
 
     def __init__(self, length):
         self.length = length

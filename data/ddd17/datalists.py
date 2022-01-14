@@ -1,7 +1,15 @@
+"""
+
+Generate datalists for DDD17 dataset.
+
+@author: Joshua Chough
+
+"""
+
 import os
 from natsort import natsorted, ns
 
-txt_directory = 'datalists/'
+list_directory = 'datalists/'
 splits = ['train', 'test']
 event_directory = 'events/'
 label_directory = 'labels/'
@@ -9,7 +17,6 @@ batch_size = 64
 mod = True if (input('Mod? ') == 'yes') else False
 
 for split in splits:
-
     sequences = []
     paths = []
     lastExample = -1
@@ -32,7 +39,7 @@ for split in splits:
 
     print('Train split size: {}'.format(len(paths)))
 
-    txt_path = txt_directory + input('File name for {} split: '.format(split)) + '.txt'
-    with open(txt_path, 'w') as a:
+    list_path = list_directory + input('File name for {} split: '.format(split)) + '.txt'
+    with open(list_path, 'w') as a:
         for path in paths:
             a.write(path)
