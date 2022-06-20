@@ -1,6 +1,6 @@
 """
 
-Model utilities.
+Model utility classes and functions.
 
 @author: Joshua Chough
 

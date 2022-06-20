@@ -1,6 +1,6 @@
 """
 
-Setup an environment for training or testing for semantic segmentation.
+Setup an environment with relevant objects and config for training or testing for semantic segmentation.
 
 @author: Joshua Chough
 

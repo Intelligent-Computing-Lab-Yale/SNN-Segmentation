@@ -1,6 +1,6 @@
 """
 
-Utility functions for custom files and identifiers.
+Custom File class and utility functions for custom files and identifiers.
 
 @author: Joshua Chough
 
