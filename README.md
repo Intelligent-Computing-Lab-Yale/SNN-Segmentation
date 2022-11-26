@@ -1,6 +1,6 @@
 # SNN-Segmentation
 
-This is the code repository for the paper [Beyond Classification: Directly Training Spiking Neural Networks for Semantic Segmentation](https://arxiv.org/abs/2110.07742).
+This is the code repository for the paper [Beyond Classification: Directly Training Spiking Neural Networks for Semantic Segmentation](https://doi.org/10.1088/2634-4386/ac9b86).
 
 ## Abstract
 
